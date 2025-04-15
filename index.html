@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>假透明轉真正透明圖片工具</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+    canvas { max-width: 100%; border: 1px solid #ccc; margin-top: 10px; }
+    label { display: block; margin: 4px 0; }
+    button { margin-right: 10px; margin-top: 10px; }
+    input[type="color"] { margin-top: 5px; }
+    .color-sample { 
+      display: inline-block; 
+      width: 16px; 
+      height: 16px; 
+      margin-left: 5px;
+      vertical-align: middle;
+      border: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <h2>假透明轉真正透明圖片工具</h2>
+
+  <input type="file" id="fileInput" accept="image/*" /><br/><br/>
+
+  <fieldset>
+    <legend>選擇要去除的顏色：</legend>
+    <div id="colorOptions">
+      <label><input type="checkbox" value="#FFFFFF" /> 純白色 <span class="color-sample" style="background-color: #FFFFFF;"></span></label>
+      <label><input type="checkbox" value="#F5F5F5" checked /> 截圖背景色 1 (很淺的灰色) <span class="color-sample" style="background-color: #F5F5F5;"></span></label>
+      <label><input type="checkbox" value="#F0F0F0" /> 截圖背景色 2 <span class="color-sample" style="background-color: #F0F0F0;"></span></label>  
+      <label><input type="checkbox" value="#FAFAFA" /> 截圖背景色 3 (米白色) <span class="color-sample" style="background-color: #FAFAFA;"></span></label>
+      <label><input type="checkbox" value="#ECECEC" /> 截圖背景色 4 <span class="color-sample" style="background-color: #ECECEC;"></span></label>
+      <label><input type="checkbox" value="#FF00FF" /> 紫紅色 (某些設計軟體使用) <span class="color-sample" style="background-color: #FF00FF;"></span></label>
+      <label><input type="checkbox" value="#00FF00" /> 綠幕色 <span class="color-sample" style="background-color: #00FF00;"></span></label>
+      <label><input type="checkbox" value="#000000" /> 黑色 <span class="color-sample" style="background-color: #000000;"></span></label>
+    </div>
+    <label>新增自訂顏色：<input type="color" id="customColor" /></label>
+    <button id="addCustomColor">新增此顏色</button>
+  </fieldset><br/>
+
+  <button onclick="setMode('border')">方法 1：邊緣推進</button>
+  <button onclick="setMode('exact')">方法 2：完全去除</button>
+  <button onclick="processImage()">預覽處理結果</button>
+  <button onclick="downloadImage()">下載圖片</button>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const customColorInput = document.getElementById('customColor');
+    const colorOptions = document.getElementById('colorOptions');
+    const addCustomColorBtn = document.getElementById('addCustomColor');
+    let image = null;
+    let mode = 'border';
+    let originalImageData = null;
+
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        image = new Image();
+        image.onload = () => {
+          canvas.width = image.width;
+          canvas.height = image.height;
+          ctx.drawImage(image, 0, 0);
+          // 儲存原始圖像資料
+          originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        };
+        image.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    addCustomColorBtn.addEventListener('click', () => {
+      const val = customColorInput.value.toUpperCase();
+      // 檢查顏色是否已存在
+      const existingColors = [...colorOptions.querySelectorAll('input[type=checkbox]')];
+      if (!existingColors.find(cb => cb.value === val)) {
+        const label = document.createElement('label');
+        const colorSample = `<span class="color-sample" style="background-color: ${val};"></span>`;
+        label.innerHTML = `<input type="checkbox" value="${val}" checked /> ${val} ${colorSample}`;
+        colorOptions.appendChild(label);
+      } else {
+        // 如果顏色已存在，直接選中對應的複選框
+        const existingCheckbox = existingColors.find(cb => cb.value === val);
+        existingCheckbox.checked = true;
+      }
+    });
+
+    function setMode(m) {
+      mode = m;
+      alert('已選擇模式：' + (m === 'border' ? '邊緣推進' : '完全去除'));
+    }
+
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+    }
+
+    function colorDistance(r1, g1, b1, r2, g2, b2) {
+      // 計算顏色距離（簡單的歐幾里德距離）
+      return Math.sqrt(
+        Math.pow(r1 - r2, 2) + 
+        Math.pow(g1 - g2, 2) + 
+        Math.pow(b1 - b2, 2)
+      );
+    }
+
+    function matchColor(data, i, color, tolerance = 10) {
+      // 使用顏色距離來比較，可以設置容差值
+      // 對於淺色背景，提高容差可能更有效
+      return colorDistance(data[i], data[i + 1], data[i + 2], color.r, color.g, color.b) <= tolerance;
+    }
+
+    function processImage() {
+      if (!image) {
+        alert('請先選擇圖片');
+        return;
+      }
+      
+      // 還原原始圖像
+      if (originalImageData) {
+        ctx.putImageData(originalImageData, 0, 0);
+      } else {
+        ctx.drawImage(image, 0, 0);
+      }
+      
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const checked = [...document.querySelectorAll('input[type=checkbox]:checked')];
+      
+      if (checked.length === 0) {
+        alert('請選擇至少一種要去除的顏色');
+        return;
+      }
+      
+      const removeColors = checked.map(cb => hexToRgb(cb.value));
+
+      if (mode === 'exact') {
+        // 完全去除模式
+        for (let i = 0; i < data.length; i += 4) {
+          if (removeColors.some(c => matchColor(data, i, c))) {
+            data[i + 3] = 0; // 設置為完全透明
+          }
+        }
+      } else {
+        // 邊緣推進模式 - 使用廣度優先搜索而不是深度優先搜索
+        const visited = new Uint8Array(canvas.width * canvas.height);
+        const queue = [];
+
+        // 標記邊緣像素
+        for (let x = 0; x < canvas.width; x++) {
+          pushToQueue(x, 0, visited, data, removeColors, queue);
+          pushToQueue(x, canvas.height - 1, visited, data, removeColors, queue);
+        }
+        for (let y = 0; y < canvas.height; y++) {
+          pushToQueue(0, y, visited, data, removeColors, queue);
+          pushToQueue(canvas.width - 1, y, visited, data, removeColors, queue);
+        }
+
+        // 廣度優先搜索處理
+        while (queue.length > 0) {
+          const { x, y } = queue.shift();
+          const idx = (y * canvas.width + x) * 4;
+          data[idx + 3] = 0; // 設置為透明
+          
+          // 檢查四個方向的相鄰像素
+          pushToQueue(x + 1, y, visited, data, removeColors, queue);
+          pushToQueue(x - 1, y, visited, data, removeColors, queue);
+          pushToQueue(x, y + 1, visited, data, removeColors, queue);
+          pushToQueue(x, y - 1, visited, data, removeColors, queue);
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    function pushToQueue(x, y, visited, data, removeColors, queue) {
+      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+      
+      const idx = y * canvas.width + x;
+      if (visited[idx]) return;
+      
+      const i = idx * 4;
+      if (removeColors.some(c => matchColor(data, i, c))) {
+        visited[idx] = 1;
+        queue.push({ x, y });
+      }
+    }
+
+    function downloadImage() {
+      if (!image) {
+        alert('請先處理圖片');
+        return;
+      }
+      
+      const link = document.createElement('a');
+      link.download = 'transparent.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+  </script>
+</body>
+</html>
